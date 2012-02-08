@@ -29,6 +29,57 @@ module Mailman
       @router.default_block = block
     end
 
+    def watch_maildir
+      require 'maildir'
+      require 'fssm'
+
+      Mailman.logger.info "Maildir receiver enabled (#{Mailman.config.maildir})."
+      @maildir = Maildir.new(Mailman.config.maildir)
+
+      Mailman.logger.debug "Monitoring the Maildir for new messages..."
+      FSSM.monitor File.join(Mailman.config.maildir, 'new') do |monitor|
+        monitor.create { |directory, filename| # a new message was delivered to new
+          process_maildir
+        }
+      end
+    end
+
+    def retrieve_from_connection(connection)
+      connection.connect
+      connection.get_messages
+      connection.disconnect
+    rescue SystemCallError => e
+      Mailman.logger.error e.message
+    end
+
+    def watch_connection(connection)
+      polling = true
+
+      if Mailman.config.graceful_death
+        Signal.trap("INT") { polling = false }
+      end
+
+      loop do
+        retrieve_from_connection(connection)
+
+        break if !polling
+        sleep Mailman.config.poll_interval
+      end
+    end
+
+    def connection_configured?
+      Mailman.config.pop3 || Mailman.config.imap
+    end
+
+    def create_connection(options)
+      options = {:processor => @processor}.merge(options)
+      if Mailman.config.pop3
+        Receiver::POP3.new(options)
+      else
+        Receiver::IMAP.new(options)
+      end
+    end
+
     # Runs the application.
     def run
       Mailman.logger.info "Mailman v#{Mailman::VERSION} started"
@@ -42,49 +93,18 @@ module Mailman
       if !Mailman.config.ignore_stdin && $stdin.fcntl(Fcntl::F_GETFL, 0) == 0 # we have stdin
         Mailman.logger.debug "Processing message from STDIN."
         @processor.process($stdin.read)
-      elsif Mailman.config.pop3
-        options = {:processor => @processor}.merge(Mailman.config.pop3)
-        Mailman.logger.info "POP3 receiver enabled (#{options[:username]}@#{options[:server]})."
+      elsif connection_configured?
+        connection = create_connection(options)
+
         if Mailman.config.poll_interval > 0 # we should poll
-          polling = true
           Mailman.logger.info "Polling enabled. Checking every #{Mailman.config.poll_interval} seconds."
+          watch_connection(connection)
         else
-          polling = false
           Mailman.logger.info 'Polling disabled. Checking for messages once.'
+          retrieve_from_connection(connection)
         end
-
-        connection = Receiver::POP3.new(options)
-
-        if Mailman.config.graceful_death
-          Signal.trap("INT") {polling = false}
-        end
-
-        loop do
-          begin
-            connection.connect
-            connection.get_messages
-            connection.disconnect
-          rescue SystemCallError => e
-            Mailman.logger.error e.message
-          end
-
-          break if !polling
-          sleep Mailman.config.poll_interval
-        end
-
       elsif Mailman.config.maildir
-        require 'maildir'
-        require 'fssm'
-
-        Mailman.logger.info "Maildir receiver enabled (#{Mailman.config.maildir})."
-        @maildir = Maildir.new(Mailman.config.maildir)
-
-        Mailman.logger.debug "Monitoring the Maildir for new messages..."
-        FSSM.monitor File.join(Mailman.config.maildir, 'new') do |monitor|
-          monitor.create { |directory, filename| # a new message was delivered to new
-            process_maildir
-          }
-        end
+        watch_maildir
       end
     end
 
