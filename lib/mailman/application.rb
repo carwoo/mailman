@@ -67,12 +67,12 @@ module Mailman
       end
     end
 
-    def connection_configured?
+    def connection_configuration
       Mailman.config.pop3 || Mailman.config.imap
     end
 
     def create_connection(options)
-      options = {:processor => @processor}.merge(options)
+      options = options.reverse_merge :processor => @processor
       if Mailman.config.pop3
         Receiver::POP3.new(options)
       else
@@ -93,7 +93,7 @@ module Mailman
       if !Mailman.config.ignore_stdin && $stdin.fcntl(Fcntl::F_GETFL, 0) == 0 # we have stdin
         Mailman.logger.debug "Processing message from STDIN."
         @processor.process($stdin.read)
-      elsif connection_configured?
+      elsif options = connection_configuration
         connection = create_connection(options)
 
         if Mailman.config.poll_interval > 0 # we should poll

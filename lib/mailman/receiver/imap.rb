@@ -2,7 +2,7 @@ module Mailman
   module Receiver
     # Receives messages using IMAP, and passes them to a {MessageProcessor}.
     class IMAP
-      # @return [Net::POP3] the POP3 connection
+      # @return [Net::IMAP] the IMAP connection
       attr_reader :connection
 
       # @param [Hash] options the receiver options
