@@ -33,7 +33,11 @@ module Mailman
       end
 
       def disconnect
-        @connection.expunge
+        begin
+          @connection.expunge
+        rescue Net::IMAP::Error, ThreadError => e
+          puts "Failed to expunge: #{e}"
+        end
         @connection.logout
         @connection.disconnect unless @connection.disconnected?
       end
